@@ -1,7 +1,7 @@
 #!/bin/sh
 
-WARN=80
-CRIT=90
+WARN=85
+CRIT=95
 df -H | grep -vE '^Filesystem|tmpfs|cdrom' | awk '{ print $5 " " $1 }' | while read output;
 do
   used=$(echo $output | awk '{ print $1}' | cut -d'%' -f1  )
