@@ -70,7 +70,7 @@ my $fs_cli_location = "/usr/local/freeswitch/bin/fs_cli";
 
 my $password_cmd = "";
 
-$filename = '/root/fs_cli.pass';
+my $filename = '/etc/sensu/fs_cli.pass';
 if (-e $filename) {
     open my $fh, '<', $filename or die "Can't open file $!";
 	my $password = do { local $/; <$fh> };
