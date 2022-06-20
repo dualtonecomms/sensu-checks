@@ -8,7 +8,7 @@ do
   if [ $used -ge $THRESHOLD ]; then
     echo "Running out of space \"$partition ($usep%)\" on $(hostname) as on $(date)"
     exit 1;
-  elif
+  else
     exit 0;
   fi
 done
