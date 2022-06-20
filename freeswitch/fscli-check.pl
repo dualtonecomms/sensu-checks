@@ -68,11 +68,13 @@ $PROGNAME = basename( $0 );
 # Fully qualified path to fs_cli. Modify this to suit:
 my $fs_cli_location = "/usr/local/freeswitch/bin/fs_cli";
 
-my $filename = '/etc/sensu/fs_cli.pass';
+my $password_cmd = "";
+
+$filename = '/root/fs_cli.pass';
 if (-e $filename) {
     open my $fh, '<', $filename or die "Can't open file $!";
 	my $password = do { local $/; <$fh> };
-	$fs_cli_location = $fs_cli_location." -p ".$password;
+	$password_cmd = " -p ".$password;
 }
 
 # Declare some vars
@@ -164,7 +166,7 @@ given ( $query ) {
 
     # Perform a 'show calls count'
     when ( "show-calls-count" ) {
-        @fs_cli_output = `$fs_cli_location -x "show calls count"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "show calls count"`;
         foreach ( @fs_cli_output ) {
             if ( /total/i ) {
                 my @temp = split( /\s+/, $_ );
@@ -176,7 +178,7 @@ given ( $query ) {
     }
 
     when ( "sofia-status-internal" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "sofia status"`;
         $subquery      = 'internal';
         foreach ( @fs_cli_output ) {
             if ( /internal/i ) {
@@ -198,7 +200,7 @@ given ( $query ) {
     }
 
     when ( "sofia-status-external" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "sofia status"`;
         $subquery      = 'external';
         foreach ( @fs_cli_output ) {
             if ( /external/i ) {
@@ -220,7 +222,7 @@ given ( $query ) {
     }
 
     when ( "sofia-status-profile-internal-failed-calls-in" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status profile internal"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "sofia status profile internal"`;
         $subquery      = 'failed-calls-in';
         foreach ( @fs_cli_output ) {
             if ( /failed-calls-in/i ) {
@@ -232,7 +234,7 @@ given ( $query ) {
     }
 
     when ( "sofia-status-profile-internal-failed-calls-out" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status profile internal"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "sofia status profile internal"`;
         $subquery      = 'failed-calls-out';
         foreach ( @fs_cli_output ) {
             if ( /failed-calls-out/i ) {
@@ -244,7 +246,7 @@ given ( $query ) {
     }
 
     when ( "show-registrations-count" ) {
-        @fs_cli_output = `$fs_cli_location -x "show registrations"`;
+        @fs_cli_output = `$fs_cli_location $password_cmd -x "show registrations"`;
         foreach ( @fs_cli_output ) {
             if ( /total/i ) {
                 my @temp = split( /\s+/, $_ );
