@@ -68,6 +68,13 @@ $PROGNAME = basename( $0 );
 # Fully qualified path to fs_cli. Modify this to suit:
 my $fs_cli_location = "/usr/local/freeswitch/bin/fs_cli";
 
+$filename = '/root/fs_cli.pass';
+if (-e $filename) {
+    open my $fh, '<', $filename or die "Can't open file $!";
+	my $password = do { local $/; <$fh> };
+	$fs_cli_location = $fs_cli_location." -p ".$password;
+}
+
 # Declare some vars
 my @fs_cli_output;
 my $subquery;
