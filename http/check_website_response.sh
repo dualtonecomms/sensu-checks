@@ -151,7 +151,7 @@ pageload(){
 		ENDTIME=$($DATE +%s%N)
 	else
                 STARTTIME=$($DATE +%s%N)
-                $WGET -pq --nocache --delete-after $URL
+                $WGET -pq --no-cache --delete-after $URL
                 ENDTIME=$($DATE +%s%N)
 	fi
 	TIMEDIFF=$((($ENDTIME-$STARTTIME)/1000000))
