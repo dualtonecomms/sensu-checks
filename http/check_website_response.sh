@@ -147,11 +147,11 @@ checkopen(){
 pageload(){
 	if [ -n "$NOCERT" ]; then
 		STARTTIME=$($DATE +%s%N)
-		$WGET --no-check-certificate -q $URL
+		$WGET --no-check-certificate -pq --no-cache --delete-after $URL
 		ENDTIME=$($DATE +%s%N)
 	else
                 STARTTIME=$($DATE +%s%N)
-                $WGET -q $URL
+                $WGET -pq --nocache --delete-after $URL
                 ENDTIME=$($DATE +%s%N)
 	fi
 	TIMEDIFF=$((($ENDTIME-$STARTTIME)/1000000))
