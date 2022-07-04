@@ -2,8 +2,8 @@
 
 ID=$1
 
-TOTAL=$(pct df $ID | tail -1 | awk '{print $3}')
-AVAILABLE=$(pct df $ID | tail -1 | awk '{print $5}')
+TOTAL=$(cat /var/log/proxmox.${1}.log | tail -1 | awk '{print $3}')
+AVAILABLE=$(cat /var/log/proxmox.${1}.log | tail -1 | awk '{print $5}')
 TOTAL_INT=${TOTAL::-1}
 AVAILABLE_INT=${AVAILABLE::-1}
 PERCENT=`echo "scale=4; $AVAILABLE_INT/$TOTAL_INT*100" | bc`
