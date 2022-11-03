@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CHECK=`fs_cli -x "sofia status profile internal"`
+CHECK=`/usr/local/freeswitch/bin/fs_cli -x "sofia status profile internal"`
 
 if
 	echo "$CHECK" | grep -q "Invalid Profile!"; then
