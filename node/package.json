@@ -1,1 +1,1 @@
-{ "dependencies": { "sip": "^0.0.6" } }
+{"dependencies":{"find-free-port":"^2.0.0","sip":"^0.0.6"}}
