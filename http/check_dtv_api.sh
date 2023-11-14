@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # The URL to be checked
-URL="https://localhost:3000/api/v1/test"
+# If no argument is provided, default to "https://localhost:3000/api/v1/test"
+URL="${1:-https://localhost:3000/api/v1/test}"
 
 # Use curl to fetch the data from the URL, -k allows connections to SSL sites without certs
 response=$(curl -k -s "$URL")
