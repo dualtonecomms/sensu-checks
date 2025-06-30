@@ -165,16 +165,8 @@ pageload(){
 	OUTMSG="$TIMEDIFF ms"
 }
 
-# Clean up temp files
-cleanup(){
-	if [ -f "$WGETOUTCKSUM" ]; then
-		rm -f "$WGETOUTCKSUM"
-	fi
-}
-
 # Output statement and exit
 output(){
-	cleanup
 	$ECHO "RESPONSE: $STATUS - $OUTMSG""|Response="$TIMEDIFF"ms;"$WARN";"$CRIT";0" 
 	if [ "$STATUS" = "OK" ]; then
 		exit 0
