@@ -131,9 +131,9 @@ checkopen(){
 	
 	# Check if page can be loaded and contains data
 	if [ -n "$NOCERT" ]; then
-		$WGET --no-check-certificate -q -O $WGETOUTCKSUM $URL
+		$WGET --no-check-certificate --timeout=30 --tries=2 --max-redirect=5 -q -O $WGETOUTCKSUM $URL
 	else
-		$WGET -q -O $WGETOUTCKSUM $URL
+		$WGET --secure-protocol=auto --ca-directory=/etc/ssl/certs --timeout=30 --tries=2 --max-redirect=5 -q -O $WGETOUTCKSUM $URL
 	fi
 
 	if [ ! -s "$WGETOUTCKSUM" ]; then
@@ -147,11 +147,11 @@ checkopen(){
 pageload(){
 	if [ -n "$NOCERT" ]; then
 		STARTTIME=$($DATE +%s%N)
-		$WGET --no-check-certificate -pq --no-cache --delete-after $URL
+		$WGET --no-check-certificate --timeout=30 --tries=2 --max-redirect=5 -pq --no-cache --delete-after $URL
 		ENDTIME=$($DATE +%s%N)
 	else
                 STARTTIME=$($DATE +%s%N)
-                $WGET -pq --no-cache --delete-after $URL
+                $WGET --secure-protocol=auto --ca-directory=/etc/ssl/certs --timeout=30 --tries=2 --max-redirect=5 -pq --no-cache --delete-after $URL
                 ENDTIME=$($DATE +%s%N)
 	fi
 	TIMEDIFF=$((($ENDTIME-$STARTTIME)/1000000))
@@ -165,8 +165,16 @@ pageload(){
 	OUTMSG="$TIMEDIFF ms"
 }
 
+# Clean up temp files
+cleanup(){
+	if [ -f "$WGETOUTCKSUM" ]; then
+		rm -f "$WGETOUTCKSUM"
+	fi
+}
+
 # Output statement and exit
 output(){
+	cleanup
 	$ECHO "RESPONSE: $STATUS - $OUTMSG""|Response="$TIMEDIFF"ms;"$WARN";"$CRIT";0" 
 	if [ "$STATUS" = "OK" ]; then
 		exit 0
