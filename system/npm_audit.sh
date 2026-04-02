@@ -24,8 +24,35 @@ if [ -z "$projects" ]; then
 fi
 
 project_count=$(echo "$projects" | wc -l | tr -d ' ')
-node_ver=$(node --version 2>/dev/null || echo "not found")
-npm_ver=$(npm --version 2>/dev/null || echo "not found")
+NODE_BIN=$(command -v node 2>/dev/null)
+NPM_BIN=$(command -v npm 2>/dev/null)
+
+if [ -z "$NODE_BIN" ] || [ -z "$NPM_BIN" ]; then
+  for nvmdir in /root/.nvm /home/*/.nvm; do
+    if [ -s "$nvmdir/nvm.sh" ]; then
+      export NVM_DIR="$nvmdir"
+      . "$nvmdir/nvm.sh" 2>/dev/null
+      break
+    fi
+  done
+  NODE_BIN=$(command -v node 2>/dev/null)
+  NPM_BIN=$(command -v npm 2>/dev/null)
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  for p in /usr/local/bin/node /usr/bin/node /opt/node/bin/node; do
+    if [ -x "$p" ] 2>/dev/null; then NODE_BIN="$p"; break; fi
+  done
+fi
+
+if [ -z "$NPM_BIN" ]; then
+  for p in /usr/local/bin/npm /usr/bin/npm /opt/node/bin/npm; do
+    if [ -x "$p" ] 2>/dev/null; then NPM_BIN="$p"; break; fi
+  done
+fi
+
+node_ver=$("$NODE_BIN" --version 2>/dev/null || echo "not found")
+npm_ver=$("$NPM_BIN" --version 2>/dev/null || echo "not found")
 
 worst_exit=0
 output=""
@@ -138,7 +165,7 @@ echo "$projects" | while IFS= read -r project; do
     continue
   fi
 
-  audit_json=$(cd "$project" && npm audit --json 2>/dev/null) || true
+  audit_json=$(cd "$project" && "$NPM_BIN" audit --json 2>/dev/null) || true
 
   critical=$(echo "$audit_json" | sed -n 's/.*"critical":\([0-9]*\).*/\1/p' | head -1)
   high=$(echo "$audit_json" | sed -n 's/.*"high":\([0-9]*\).*/\1/p' | head -1)
