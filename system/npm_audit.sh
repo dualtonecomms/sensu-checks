@@ -24,38 +24,55 @@ if [ -z "$projects" ]; then
 fi
 
 project_count=$(echo "$projects" | wc -l | tr -d ' ')
-NODE_BIN=$(command -v node 2>/dev/null)
-NPM_BIN=$(command -v npm 2>/dev/null)
 
-if [ -z "$NODE_BIN" ] || [ -z "$NPM_BIN" ]; then
-  for nvmdir in /root/.nvm /home/*/.nvm; do
-    if [ -s "$nvmdir/nvm.sh" ]; then
-      export NVM_DIR="$nvmdir"
-      . "$nvmdir/nvm.sh" 2>/dev/null
+# --- find node/npm ---
+# 1. check PATH
+# 2. scan common locations and nvm directories
+# 3. last resort: find on the filesystem
+if [ -z "$(command -v node 2>/dev/null)" ] || [ -z "$(command -v npm 2>/dev/null)" ]; then
+  found=""
+  for p in /usr/local/bin /usr/bin /opt/node/bin; do
+    if [ -x "$p/node" ] && [ -x "$p/npm" ]; then
+      found="$p"
       break
     fi
   done
-  NODE_BIN=$(command -v node 2>/dev/null)
-  NPM_BIN=$(command -v npm 2>/dev/null)
+
+  if [ -z "$found" ]; then
+    found=$(find /root/.nvm /home/*/.nvm /opt/nvm /usr/local /usr/lib 2>/dev/null \
+      -name node -type f -executable 2>/dev/null \
+      | sort -V | tail -1 \
+      | xargs dirname 2>/dev/null)
+  fi
+
+  if [ -z "$found" ]; then
+    found=$(find / -name node -type f -executable \
+      -not -path "*/node_modules/*" \
+      -not -path "/proc/*" \
+      -not -path "/sys/*" \
+      2>/dev/null | sort -V | tail -1 | xargs dirname 2>/dev/null)
+  fi
+
+  if [ -n "$found" ]; then
+    export PATH="$found:$PATH"
+  fi
 fi
 
-if [ -z "$NODE_BIN" ]; then
-  for p in /usr/local/bin/node /usr/bin/node /opt/node/bin/node; do
-    if [ -x "$p" ] 2>/dev/null; then NODE_BIN="$p"; break; fi
-  done
-fi
+NODE_BIN=$(command -v node 2>/dev/null)
+NPM_BIN=$(command -v npm 2>/dev/null)
 
+node_ver=""
+npm_ver=""
+[ -n "$NODE_BIN" ] && node_ver=$("$NODE_BIN" --version 2>/dev/null)
+[ -n "$NPM_BIN" ] && npm_ver=$("$NPM_BIN" --version 2>/dev/null)
+
+# if we still can't find npm, we can't audit anything
 if [ -z "$NPM_BIN" ]; then
-  for p in /usr/local/bin/npm /usr/bin/npm /opt/node/bin/npm; do
-    if [ -x "$p" ] 2>/dev/null; then NPM_BIN="$p"; break; fi
-  done
+  echo "NODE_SECURITY WARNING - npm not found, cannot run audit | node ${node_ver:-not found}"
+  exit 1
 fi
 
-node_ver=$("$NODE_BIN" --version 2>/dev/null || echo "not found")
-npm_ver=$("$NPM_BIN" --version 2>/dev/null || echo "not found")
-
-worst_exit=0
-output=""
+# --- helpers ---
 
 get_mtime() {
   if [ "$(uname)" = "Darwin" ]; then
@@ -73,6 +90,11 @@ fmt_ts() {
     date -r "$ts" "+%Y-%m-%d %H:%M:%S" 2>/dev/null
   fi
 }
+
+# --- clean up any stale temp files ---
+rm -f /tmp/.node_security_state.$$ /tmp/.node_security_output.$$
+
+# --- check each project ---
 
 echo "$projects" | while IFS= read -r project; do
   [ -z "$project" ] && continue
@@ -167,6 +189,12 @@ echo "$projects" | while IFS= read -r project; do
 
   audit_json=$(cd "$project" && "$NPM_BIN" audit --json 2>/dev/null) || true
 
+  if [ -z "$audit_json" ]; then
+    echo "  SKIP audit returned no data"
+    echo ""
+    continue
+  fi
+
   critical=$(echo "$audit_json" | sed -n 's/.*"critical":\([0-9]*\).*/\1/p' | head -1)
   high=$(echo "$audit_json" | sed -n 's/.*"high":\([0-9]*\).*/\1/p' | head -1)
   moderate=$(echo "$audit_json" | sed -n 's/.*"moderate":\([0-9]*\).*/\1/p' | head -1)
@@ -200,6 +228,8 @@ echo "$projects" | while IFS= read -r project; do
   echo ""
 done > /tmp/.node_security_output.$$
 
+# --- determine exit code ---
+
 worst_exit=0
 if [ -f /tmp/.node_security_state.$$ ]; then
   if grep -q "2" /tmp/.node_security_state.$$; then
@@ -216,7 +246,7 @@ case $worst_exit in
   2) label="CRITICAL" ;;
 esac
 
-echo "NODE_SECURITY $label - $project_count project(s) | node $node_ver | npm $npm_ver"
+echo "NODE_SECURITY $label - $project_count project(s) | node ${node_ver:-not found} | npm $npm_ver"
 cat /tmp/.node_security_output.$$
 rm -f /tmp/.node_security_output.$$
 
