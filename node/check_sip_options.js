@@ -10,6 +10,10 @@ function parsePositiveInteger(value, fallback) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function log(...args) {
+    console.log(new Date().toISOString(), ...args);
+}
+
 function stopSipStack() {
     if (typeof sip.stop !== 'function') {
         return;
@@ -19,7 +23,7 @@ function stopSipStack() {
         sip.stop();
     }
     catch (err) {
-        console.log('[sip-options] error stopping local SIP stack:', err.message || err);
+        log('[sip-options] error stopping local SIP stack:', err.message || err);
     }
 }
 
@@ -39,14 +43,14 @@ function finish(exitCode) {
     process.exit(exitCode);
 }
 
-console.log('[sip-options] starting local SIP stack');
-console.log('[sip-options] bind port:', bindPort);
-console.log('[sip-options] target SIP URI:', targetUri || '(missing — pass as first argument)');
-console.log('[sip-options] response timeout:', responseTimeoutMs + 'ms');
-console.log('[sip-options] timeout retries:', maxAttempts - 1);
+log('[sip-options] starting local SIP stack');
+log('[sip-options] bind port:', bindPort);
+log('[sip-options] target SIP URI:', targetUri || '(missing — pass as first argument)');
+log('[sip-options] response timeout:', responseTimeoutMs + 'ms');
+log('[sip-options] timeout retries:', maxAttempts - 1);
 
 if (!targetUri) {
-    console.log('[sip-options] exiting 2 (missing target URI)');
+    log('[sip-options] exiting 2 (missing target URI)');
     process.exit(2);
 }
 
@@ -78,15 +82,15 @@ function sendOptions() {
     };
 
     if (attempt > 1) {
-        console.log('[sip-options] timeout retry:', attempt + '/' + maxAttempts);
+        log('[sip-options] timeout retry:', attempt + '/' + maxAttempts);
     }
-    console.log('[sip-options] request method:', r.method);
-    console.log('[sip-options] request URI:', r.uri);
-    console.log('[sip-options] From tag:', fromTag);
-    console.log('[sip-options] Call-ID:', callId);
-    console.log('[sip-options] CSeq:', cseqSeq, r.headers.cseq.method);
-    console.log('[sip-options] User-Agent:', r.headers['User-Agent']);
-    console.log('[sip-options] sending OPTIONS and awaiting response');
+    log('[sip-options] request method:', r.method);
+    log('[sip-options] request URI:', r.uri);
+    log('[sip-options] From tag:', fromTag);
+    log('[sip-options] Call-ID:', callId);
+    log('[sip-options] CSeq:', cseqSeq, r.headers.cseq.method);
+    log('[sip-options] User-Agent:', r.headers['User-Agent']);
+    log('[sip-options] sending OPTIONS and awaiting response');
 
     clearTimeout(responseTimeout);
     responseTimeout = setTimeout(() => {
@@ -94,16 +98,16 @@ function sendOptions() {
             return;
         }
 
-        console.log('[sip-options] timed out awaiting response');
+        log('[sip-options] timed out awaiting response');
 
         if (attempt < maxAttempts) {
-            console.log('[sip-options] retrying OPTIONS after timeout');
+            log('[sip-options] retrying OPTIONS after timeout');
             sendOptions();
             return;
         }
 
-        console.log(`SIP OPTIONS sent to ${targetUri} - Failure: no SIP response received within ${responseTimeoutMs}ms after ${maxAttempts} attempts`);
-        console.log('[sip-options] exiting 2 (timeout)');
+        log(`SIP OPTIONS sent to ${targetUri} - Failure: no SIP response received within ${responseTimeoutMs}ms after ${maxAttempts} attempts`);
+        log('[sip-options] exiting 2 (timeout)');
         finish(2);
     }, responseTimeoutMs);
 
@@ -121,31 +125,31 @@ function sendOptions() {
         const reason = response && response.reason;
         const headerKeys = response && response.headers ? Object.keys(response.headers) : [];
 
-        console.log('[sip-options] response received');
-        console.log('[sip-options] status:', status);
-        console.log('[sip-options] reason:', reason);
+        log('[sip-options] response received');
+        log('[sip-options] status:', status);
+        log('[sip-options] reason:', reason);
         if (headerKeys.length) {
-            console.log('[sip-options] response header names:', headerKeys.join(', '));
+            log('[sip-options] response header names:', headerKeys.join(', '));
         }
 
         if (typeof status !== 'number') {
-            console.log(`SIP OPTIONS sent to ${targetUri} - Failure: SIP response did not include a numeric status`);
-            console.log('[sip-options] exiting 2 (invalid response, not retrying)');
+            log(`SIP OPTIONS sent to ${targetUri} - Failure: SIP response did not include a numeric status`);
+            log('[sip-options] exiting 2 (invalid response, not retrying)');
             finish(2);
         }
         else if (status >= 200 && status < 300) {
-            console.log(`SIP OPTIONS sent to ${targetUri} - Success: SIP response received with status: ${status} - ${reason}`);
-            console.log('[sip-options] exiting 0 (OK)');
+            log(`SIP OPTIONS sent to ${targetUri} - Success: SIP response received with status: ${status} - ${reason}`);
+            log('[sip-options] exiting 0 (OK)');
             finish(0);
         }
         else if (status >= 300 && status < 400) {
-            console.log(`SIP OPTIONS sent to ${targetUri} - Warning: SIP response received with status: ${status} - ${reason}`);
-            console.log('[sip-options] exiting 1 (warning / redirect class, not retrying)');
+            log(`SIP OPTIONS sent to ${targetUri} - Warning: SIP response received with status: ${status} - ${reason}`);
+            log('[sip-options] exiting 1 (warning / redirect class, not retrying)');
             finish(1);
         }
         else {
-            console.log(`SIP OPTIONS sent to ${targetUri} - Failure: SIP response received with status: ${status} - ${reason}`);
-            console.log('[sip-options] exiting 2 (failure class, not retrying)');
+            log(`SIP OPTIONS sent to ${targetUri} - Failure: SIP response received with status: ${status} - ${reason}`);
+            log('[sip-options] exiting 2 (failure class, not retrying)');
             finish(2);
         }
     });
