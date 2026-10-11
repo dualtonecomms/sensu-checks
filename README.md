@@ -33,6 +33,24 @@ Now you should be able to install the sensu-go-agent as well as the Dualtone age
 
 ### Complete
 
+## HTTP and SIP checks
+
+The HTTP check requires `curl`, `awk`, `mktemp` and `cmp`. Existing `-w`, `-c`, `-u` and `-nocert` arguments still work. It measures one HTTP request per attempt, including redirects, and requires a successful HTTP status and a non-empty body. Certificate validation remains enabled unless `-nocert` is supplied.
+
+Slow responses and transient connection failures get one retry after 200ms. HTTP error statuses, certificate validation failures and unexpected response bodies fail immediately. The output records the first failure when a retry was needed. Normal checks make one request instead of downloading the URL twice.
+
+For an endpoint that should return exactly `OK`, add `-e OK`:
+
+```sh
+/usr/local/dualtone/sensu-checks/http/check_website_response.sh -w 2500 -c 5000 -u https://api.teleflow.app/health -e OK
+```
+
+`-e` compares the entire body, including whitespace. Set the Sensu execution timeout to at least **15 seconds** for the thresholds above. For other critical thresholds, allow two attempts of `(critical milliseconds / 1000) + 1` seconds, plus retry and process-start time.
+
+The SIP check keeps its existing two attempts and default 3000ms response timeout. Provisional `1xx` responses do not end the check or extend its deadline. A valid reply to the first attempt is accepted while the retry is running. Final `3xx` responses remain warnings, and `4xx`–`6xx` responses remain failures; those replies are not retried away. Invalid URI, port or timeout arguments return UNKNOWN, and local socket errors return a failure with the error details.
+
+Allow at least **10 seconds** in Sensu for the default SIP settings. If you override the response timeout with the fourth argument or `SIP_OPTIONS_TIMEOUT_MS`, allow both attempts plus process-start time.
+
 ## For Updates
 
 Please use this one-liner to cd to the right location and git pull - 

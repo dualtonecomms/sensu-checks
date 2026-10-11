@@ -1,13 +1,13 @@
 const sip = require('sip');
 
 const targetUri = process.argv[2];
-const bindPort = Number(process.argv[3]) || 3000;
+const bindPort = parsePositiveInteger(process.argv[3], 3000);
 const responseTimeoutMs = parsePositiveInteger(process.env.SIP_OPTIONS_TIMEOUT_MS || process.argv[4], 3000);
 const maxAttempts = 2;
 
 function parsePositiveInteger(value, fallback) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    const parsed = value === undefined ? fallback : Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function log(...args) {
@@ -30,7 +30,6 @@ function stopSipStack() {
 let finished = false;
 let responseTimeout;
 let attempt = 0;
-let currentCallId;
 
 function finish(exitCode) {
     if (finished) {
@@ -43,16 +42,23 @@ function finish(exitCode) {
     process.exit(exitCode);
 }
 
+const parsedTarget = targetUri && sip.parseUri(targetUri);
+if (!parsedTarget || parsedTarget.port === 0 || parsedTarget.port > 65535 ||
+    !bindPort || bindPort > 65535 || !responseTimeoutMs || responseTimeoutMs > 2147483647) {
+    log('[sip-options] invalid target URI, bind port or response timeout');
+    process.exit(3);
+}
+
+process.on('uncaughtException', (err) => {
+    log('[sip-options] local SIP stack error:', err.code || '', err.message || err);
+    finish(2);
+});
+
 log('[sip-options] starting local SIP stack');
 log('[sip-options] bind port:', bindPort);
-log('[sip-options] target SIP URI:', targetUri || '(missing — pass as first argument)');
+log('[sip-options] target SIP URI:', targetUri);
 log('[sip-options] response timeout:', responseTimeoutMs + 'ms');
 log('[sip-options] timeout retries:', maxAttempts - 1);
-
-if (!targetUri) {
-    log('[sip-options] exiting 2 (missing target URI)');
-    process.exit(2);
-}
 
 sip.start({
     port: bindPort,
@@ -66,7 +72,6 @@ function sendOptions() {
     const fromTag = rstring();
     const callId = rstring();
     const cseqSeq = Math.floor(Math.random() * 1e5);
-    currentCallId = callId;
 
     const r = {
         method: 'OPTIONS',
@@ -117,7 +122,8 @@ function sendOptions() {
         }
 
         const responseCallId = response && response.headers && response.headers['call-id'];
-        if (responseCallId && responseCallId !== currentCallId) {
+        // A reply to the first attempt is still valid while the retry is running.
+        if (responseCallId && responseCallId !== callId) {
             return;
         }
 
@@ -132,10 +138,13 @@ function sendOptions() {
             log('[sip-options] response header names:', headerKeys.join(', '));
         }
 
-        if (typeof status !== 'number') {
-            log(`SIP OPTIONS sent to ${targetUri} - Failure: SIP response did not include a numeric status`);
+        if (!Number.isInteger(status) || status < 100 || status > 699) {
+            log(`SIP OPTIONS sent to ${targetUri} - Failure: invalid SIP response status`);
             log('[sip-options] exiting 2 (invalid response, not retrying)');
             finish(2);
+        }
+        else if (status < 200) {
+            log('[sip-options] provisional response; still awaiting a final response');
         }
         else if (status >= 200 && status < 300) {
             log(`SIP OPTIONS sent to ${targetUri} - Success: SIP response received with status: ${status} - ${reason}`);
