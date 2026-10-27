@@ -4,8 +4,8 @@ CONFIG_FILE="${1:-/usr/local/dualtone/projects.txt}"
 WARN_ON_MODERATE=true
 
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "NODE_SECURITY OK - No config file at $CONFIG_FILE, nothing to check"
-  exit 0
+  echo "NODE_SECURITY UNKNOWN - No config file at $CONFIG_FILE"
+  exit 3
 fi
 
 projects=""
@@ -19,8 +19,8 @@ done < "$CONFIG_FILE"
 projects=$(echo "$projects" | sed '/^$/d')
 
 if [ -z "$projects" ]; then
-  echo "NODE_SECURITY OK - No project paths found in $CONFIG_FILE"
-  exit 0
+  echo "NODE_SECURITY UNKNOWN - No project paths found in $CONFIG_FILE"
+  exit 3
 fi
 
 project_count=$(echo "$projects" | wc -l | tr -d ' ')
@@ -39,7 +39,7 @@ if [ -z "$(command -v node 2>/dev/null)" ] || [ -z "$(command -v npm 2>/dev/null
   done
 
   if [ -z "$found" ]; then
-    found=$(find /root/.nvm /home/*/.nvm /opt/nvm /usr/local /usr/lib 2>/dev/null \
+    found=$(find /root/.nvm /home/*/.nvm /opt/nvm /usr/local /usr/lib \
       -name node -type f -executable 2>/dev/null \
       | sort -V | tail -1 \
       | xargs dirname 2>/dev/null)
@@ -68,8 +68,8 @@ npm_ver=""
 
 # if we still can't find npm, we can't audit anything
 if [ -z "$NPM_BIN" ]; then
-  echo "NODE_SECURITY WARNING - npm not found, cannot run audit | node ${node_ver:-not found}"
-  exit 1
+  echo "NODE_SECURITY UNKNOWN - npm not found, cannot run audit | node ${node_ver:-not found}"
+  exit 3
 fi
 
 # --- helpers ---
@@ -100,7 +100,8 @@ echo "$projects" | while IFS= read -r project; do
   [ -z "$project" ] && continue
 
   if [ ! -d "$project" ]; then
-    echo "  SKIP $(basename "$project") (directory not found)"
+    echo "  UNKNOWN $(basename "$project") (directory not found)"
+    echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
   fi
@@ -182,7 +183,8 @@ echo "$projects" | while IFS= read -r project; do
 
   # --- npm audit ---
   if [ ! -f "$project/package-lock.json" ] && [ ! -f "$project/npm-shrinkwrap.json" ]; then
-    echo "  SKIP no lockfile, cannot audit"
+    echo "  UNKNOWN no lockfile, cannot audit"
+    echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
   fi
@@ -190,20 +192,43 @@ echo "$projects" | while IFS= read -r project; do
   audit_json=$(cd "$project" && "$NPM_BIN" audit --json 2>/dev/null) || true
 
   if [ -z "$audit_json" ]; then
-    echo "  SKIP audit returned no data"
+    echo "  UNKNOWN audit returned no data"
+    echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
   fi
 
-  critical=$(echo "$audit_json" | sed -n 's/.*"critical":\([0-9]*\).*/\1/p' | head -1)
-  high=$(echo "$audit_json" | sed -n 's/.*"high":\([0-9]*\).*/\1/p' | head -1)
-  moderate=$(echo "$audit_json" | sed -n 's/.*"moderate":\([0-9]*\).*/\1/p' | head -1)
-  low=$(echo "$audit_json" | sed -n 's/.*"low":\([0-9]*\).*/\1/p' | head -1)
+  counts=$(printf '%s' "$audit_json" | "$NODE_BIN" -e '
+    var input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", function (chunk) { input += chunk; });
+    process.stdin.on("end", function () {
+      try {
+        var report = JSON.parse(input);
+        var counts = report && report.metadata && report.metadata.vulnerabilities;
+        var keys = ["critical", "high", "moderate", "low"];
+        if (!counts || report.error || keys.some(function (key) {
+          return !Number.isSafeInteger(counts[key]) || counts[key] < 0;
+        })) throw new Error("invalid audit report");
+        console.log(keys.map(function (key) { return counts[key]; }).join(" "));
+      } catch (_) {
+        process.exitCode = 3;
+      }
+    });
+  ') || {
+    echo "  UNKNOWN audit returned invalid or incomplete data"
+    echo "3" >> /tmp/.node_security_state.$$
+    echo ""
+    continue
+  }
 
-  critical=${critical:-0}
-  high=${high:-0}
-  moderate=${moderate:-0}
-  low=${low:-0}
+  # The parser emits exactly four space-separated integers.
+  # shellcheck disable=SC2086
+  set -- $counts
+  critical=$1
+  high=$2
+  moderate=$3
+  low=$4
 
   total=$((critical + high + moderate + low))
 
@@ -234,6 +259,8 @@ worst_exit=0
 if [ -f /tmp/.node_security_state.$$ ]; then
   if grep -q "2" /tmp/.node_security_state.$$; then
     worst_exit=2
+  elif grep -q "3" /tmp/.node_security_state.$$; then
+    worst_exit=3
   elif grep -q "1" /tmp/.node_security_state.$$; then
     worst_exit=1
   fi
@@ -244,6 +271,7 @@ case $worst_exit in
   0) label="OK" ;;
   1) label="WARNING" ;;
   2) label="CRITICAL" ;;
+  3) label="UNKNOWN" ;;
 esac
 
 echo "NODE_SECURITY $label - $project_count project(s) | node ${node_ver:-not found} | npm $npm_ver"
