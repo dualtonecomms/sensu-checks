@@ -72,6 +72,16 @@ if [ -z "$NPM_BIN" ]; then
   exit 3
 fi
 
+# npm writes its cache and logs under $HOME/.npm, but the sensu user's HOME
+# may not exist, so give it a throwaway cache for this run
+npm_cache=$(mktemp -d "${TMPDIR:-/tmp}/.node_security_npm.XXXXXX") || {
+  echo "NODE_SECURITY UNKNOWN - cannot create npm cache dir | node ${node_ver:-not found} | npm $npm_ver"
+  exit 3
+}
+trap 'rm -rf "$npm_cache"' EXIT
+export npm_config_cache="$npm_cache"
+export npm_config_update_notifier=false
+
 # --- helpers ---
 
 get_mtime() {
@@ -92,7 +102,7 @@ fmt_ts() {
 }
 
 # --- clean up any stale temp files ---
-rm -f /tmp/.node_security_state.$$ /tmp/.node_security_output.$$
+rm -f /tmp/.node_security_state.$$ /tmp/.node_security_output.$$ /tmp/.node_security_err.$$
 
 # --- check each project ---
 
@@ -189,10 +199,12 @@ echo "$projects" | while IFS= read -r project; do
     continue
   fi
 
-  audit_json=$(cd "$project" && "$NPM_BIN" audit --json 2>/dev/null) || true
+  audit_err=/tmp/.node_security_err.$$
+  audit_json=$(cd "$project" && "$NPM_BIN" audit --json 2>"$audit_err") || true
+  npm_err=$(grep -m1 -E '^npm (ERR!|error) ' "$audit_err" 2>/dev/null | cut -c1-200)
 
   if [ -z "$audit_json" ]; then
-    echo "  UNKNOWN audit returned no data"
+    echo "  UNKNOWN audit returned no data${npm_err:+: $npm_err}"
     echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
@@ -212,11 +224,21 @@ echo "$projects" | while IFS= read -r project; do
         })) throw new Error("invalid audit report");
         console.log(keys.map(function (key) { return counts[key]; }).join(" "));
       } catch (_) {
+        var reason = "";
+        try {
+          var parsed = JSON.parse(input);
+          var err = parsed && (parsed.error || parsed);
+          reason = (err && (err.summary || err.message || err.code)) || "";
+        } catch (_) {
+          reason = "output was not JSON";
+        }
+        console.log(String(reason).split("\n")[0].slice(0, 200));
         process.exitCode = 3;
       }
     });
   ') || {
-    echo "  UNKNOWN audit returned invalid or incomplete data"
+    reason=${counts:-$npm_err}
+    echo "  UNKNOWN audit returned invalid or incomplete data${reason:+: $reason}"
     echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
@@ -245,9 +267,34 @@ echo "$projects" | while IFS= read -r project; do
   fi
 
   if [ "$critical" -gt 0 ] || [ "$high" -gt 0 ]; then
-    echo "$audit_json" | sed -n 's/.*"name":"\([^"]*\)".*"severity":"\(critical\|high\)".*"url":"\([^"]*\)".*/\1|\2|\3/p' | sort -u | while IFS='|' read -r vname vsev vurl; do
-      echo "           -> $vname ($vsev) $vurl"
-    done
+    # list each critical/high advisory: package (severity) url
+    printf '%s' "$audit_json" | "$NODE_BIN" -e '
+      var input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", function (chunk) { input += chunk; });
+      process.stdin.on("end", function () {
+        var vulns = JSON.parse(input).vulnerabilities || {};
+        var rank = { critical: 0, high: 1 };
+        var seen = {};
+        var rows = [];
+        Object.keys(vulns).forEach(function (pkg) {
+          (vulns[pkg].via || []).forEach(function (via) {
+            if (!via || typeof via !== "object" || !(via.severity in rank)) return;
+            var row = { name: via.name || pkg, severity: via.severity, url: via.url || "" };
+            var key = row.name + " " + row.url;
+            if (seen[key]) return;
+            seen[key] = true;
+            rows.push(row);
+          });
+        });
+        rows.sort(function (a, b) {
+          return rank[a.severity] - rank[b.severity] || a.name.localeCompare(b.name);
+        });
+        rows.forEach(function (row) {
+          console.log("           -> " + row.name + " (" + row.severity + ") " + row.url);
+        });
+      });
+    ' 2>/dev/null
   fi
 
   echo ""
@@ -276,6 +323,6 @@ esac
 
 echo "NODE_SECURITY $label - $project_count project(s) | node ${node_ver:-not found} | npm $npm_ver"
 cat /tmp/.node_security_output.$$
-rm -f /tmp/.node_security_output.$$
+rm -f /tmp/.node_security_output.$$ /tmp/.node_security_err.$$
 
 exit $worst_exit
