@@ -51,6 +51,16 @@ The SIP check keeps its existing two attempts and default 3000ms response timeou
 
 Allow at least **10 seconds** in Sensu for the default SIP settings. If you override the response timeout with the fourth argument or `SIP_OPTIONS_TIMEOUT_MS`, allow both attempts plus process-start time.
 
+## Proxmox memory check
+
+`proxmox/check-pve-memory.pl` checks host memory and looks for memory that keeps growing, such as a leak. It tracks host processes, each LXC container, QEMU memory above each VM's configured RAM, kernel unreclaimable slab and shared memory. A VM filling the RAM it was given is not treated as growth. Reclaimable ZFS ARC counts as available.
+
+```sh
+/usr/local/dualtone/sensu-checks/proxmox/check-pve-memory.pl -w 90 -c 95 --creep-warn 256 --creep-crit 2048
+```
+
+Run it every 5 minutes. It keeps history in `/var/cache/sensu/sensu-agent/check-pve-memory.json` (falling back to `/var/tmp`) and needs 6 hours of samples before it checks trends. History resets on reboot. It warns when something has grown steadily by 256MB a day or more, and when the host will run out within 7 days at its current rate of growth. It does not need root. Run `--help` for all options, including `--exclude` for anything expected to grow.
+
 ## For Updates
 
 Please use this one-liner to cd to the right location and git pull - 
