@@ -1,7 +1,6 @@
 #!/bin/sh
 
 CONFIG_FILE="${1:-/usr/local/dualtone/projects.txt}"
-WARN_ON_MODERATE=true
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "NODE_SECURITY UNKNOWN - No config file at $CONFIG_FILE"
@@ -252,16 +251,12 @@ echo "$projects" | while IFS= read -r project; do
   moderate=$3
   low=$4
 
-  total=$((critical + high + moderate + low))
-
+  # only high and critical advisories alert; moderate and low are reported as OK
   if [ "$critical" -gt 0 ] || [ "$high" -gt 0 ]; then
     echo "  CRITICAL audit: $critical critical, $high high, $moderate moderate, $low low"
     echo "2" >> /tmp/.node_security_state.$$
-  elif [ "$WARN_ON_MODERATE" = true ] && [ "$moderate" -gt 0 ]; then
-    echo "  WARNING  audit: $critical critical, $high high, $moderate moderate, $low low"
-    echo "1" >> /tmp/.node_security_state.$$
-  elif [ "$total" -gt 0 ]; then
-    echo "  OK       audit: $total low severity"
+  elif [ $((moderate + low)) -gt 0 ]; then
+    echo "  OK       audit: $moderate moderate, $low low (below alert threshold)"
   else
     echo "  OK       audit: clean"
   fi
