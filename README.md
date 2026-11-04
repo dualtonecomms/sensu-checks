@@ -66,3 +66,16 @@ Run it every 5 minutes. It keeps history in `/var/cache/sensu/sensu-agent/check-
 Please use this one-liner to cd to the right location and git pull - 
 
 ```cd /usr/local/dualtone/sensu-checks/ && git pull```
+
+## npm audit check
+
+`system/npm_audit.sh` audits each project listed in `/usr/local/dualtone/projects.txt` (or the first argument). Any high or critical advisory makes it critical.
+
+To accept an advisory that has no safe fix, add it to `/usr/local/dualtone/npm-audit-allow.txt` (or the second argument). Use one line per advisory: the project folder name or full path (or `*` for every project), the GHSA ID, and an optional date after which it stops applying.
+
+```text
+# minio 8.0.7 still uses query-string 7; only decodes S3 responses
+dtx-server GHSA-qr28-fpjm-wq7f 2027-05-01
+```
+
+An allowed advisory no longer counts towards the result, but the output still lists it. A missing file allows nothing. An invalid line, or a file that cannot be read, returns UNKNOWN. The output also notes expired entries, and project entries whose advisory has gone.

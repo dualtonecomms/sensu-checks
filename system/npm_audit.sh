@@ -1,6 +1,8 @@
 #!/bin/sh
 
 CONFIG_FILE="${1:-/usr/local/dualtone/projects.txt}"
+# advisories accepted per project; a missing file means nothing is allowed
+ALLOW_FILE="${2:-/usr/local/dualtone/npm-audit-allow.txt}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "NODE_SECURITY UNKNOWN - No config file at $CONFIG_FILE"
@@ -209,88 +211,193 @@ echo "$projects" | while IFS= read -r project; do
     continue
   fi
 
-  counts=$(printf '%s' "$audit_json" | "$NODE_BIN" -e '
+  # Prints "critical high moderate low" on the first line, then tagged lines:
+  # ROW (alerting advisory), ALLOWED, EXPIRED and UNUSED (allowlist notes).
+  # Counts are npm's per-package counts, except that an allowed advisory no
+  # longer raises the package it is in or any package that depends on it.
+  report=$(printf '%s' "$audit_json" | \
+    NODE_SECURITY_ALLOW_FILE="$ALLOW_FILE" \
+    NODE_SECURITY_PROJECT="$project" \
+    NODE_SECURITY_NAME="$project_name" \
+    "$NODE_BIN" -e '
+    var fs = require("fs");
+    var keys = ["critical", "high", "moderate", "low"];
+    var rankOf = { low: 1, moderate: 2, high: 3, critical: 4 };
+
+    function fail(message) {
+      console.log(String(message).split("\n")[0].slice(0, 200));
+      process.exitCode = 3;
+    }
+
+    function readAllowlist() {
+      var file = process.env.NODE_SECURITY_ALLOW_FILE;
+      var project = process.env.NODE_SECURITY_PROJECT;
+      var name = process.env.NODE_SECURITY_NAME;
+      var today = new Date().toISOString().slice(0, 10);
+      var result = { allowed: {}, expired: [], specific: {} };
+      var text;
+      if (!file) return result;
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch (e) {
+        if (e.code === "ENOENT") return result;
+        throw new Error("cannot read allowlist " + file + ": " + e.code);
+      }
+      text.split("\n").forEach(function (raw, i) {
+        var line = raw.replace(/#.*/, "").trim();
+        if (!line) return;
+        var parts = line.split(/\s+/);
+        var where = "invalid allowlist entry at " + file + ":" + (i + 1);
+        if (parts.length < 2 || parts.length > 3) {
+          throw new Error(where + " (expected: project GHSA-id [YYYY-MM-DD])");
+        }
+        var id = parts[1].toUpperCase();
+        var until = parts[2];
+        if (!/^GHSA(-[0-9A-Z]{4}){3}$/.test(id)) throw new Error(where + " (bad advisory id " + parts[1] + ")");
+        if (until && !/^\d{4}-\d{2}-\d{2}$/.test(until)) throw new Error(where + " (bad date " + until + ")");
+        if (parts[0] !== "*" && parts[0] !== name && parts[0] !== project) return;
+        if (until && until < today) {
+          result.expired.push(id + " (expired " + until + ")");
+          return;
+        }
+        result.allowed[id] = until || "";
+        if (parts[0] !== "*") result.specific[id] = true;
+      });
+      return result;
+    }
+
     var input = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", function (chunk) { input += chunk; });
     process.stdin.on("end", function () {
+      var report;
       try {
-        var report = JSON.parse(input);
-        var counts = report && report.metadata && report.metadata.vulnerabilities;
-        var keys = ["critical", "high", "moderate", "low"];
-        if (!counts || report.error || keys.some(function (key) {
-          return !Number.isSafeInteger(counts[key]) || counts[key] < 0;
+        report = JSON.parse(input);
+        var meta = report && report.metadata && report.metadata.vulnerabilities;
+        if (!meta || report.error || keys.some(function (key) {
+          return !Number.isSafeInteger(meta[key]) || meta[key] < 0;
         })) throw new Error("invalid audit report");
-        console.log(keys.map(function (key) { return counts[key]; }).join(" "));
       } catch (_) {
         var reason = "";
         try {
-          var parsed = JSON.parse(input);
-          var err = parsed && (parsed.error || parsed);
+          var err = report && (report.error || report);
           reason = (err && (err.summary || err.message || err.code)) || "";
-        } catch (_) {
-          reason = "output was not JSON";
-        }
-        console.log(String(reason).split("\n")[0].slice(0, 200));
-        process.exitCode = 3;
+        } catch (_) {}
+        if (!report) reason = "output was not JSON";
+        return fail("audit returned invalid or incomplete data" + (reason ? ": " + reason : ""));
       }
+
+      var allow;
+      try {
+        allow = readAllowlist();
+      } catch (e) {
+        return fail(e.message);
+      }
+
+      var vulns = report.vulnerabilities || {};
+      var seenAllowed = {};
+
+      function advisoryId(via) {
+        var match = String(via.url || "").match(/GHSA(-[0-9a-z]{4}){3}/i);
+        return match ? match[0].toUpperCase() : "";
+      }
+
+      // highest severity reachable from pkg through advisories that are not allowed
+      function effective(pkg, path) {
+        if (path[pkg] || !vulns[pkg]) return 0;
+        path[pkg] = true;
+        var best = 0;
+        (vulns[pkg].via || []).forEach(function (via) {
+          var rank = 0;
+          if (typeof via === "string") {
+            rank = effective(via, path);
+          } else if (via && typeof via === "object") {
+            var id = advisoryId(via);
+            if (id && id in allow.allowed) seenAllowed[id] = via.name || pkg;
+            else rank = rankOf[via.severity] || 0;
+          }
+          if (rank > best) best = rank;
+        });
+        delete path[pkg];
+        return best;
+      }
+
+      // npm rates each package by the advisories that really reach its version,
+      // which the via chain cannot show, so npm stays the ceiling. A package only
+      // drops below it when everything left it could reach is allowed or lower.
+      var counts = { critical: 0, high: 0, moderate: 0, low: 0 };
+      Object.keys(vulns).forEach(function (pkg) {
+        var rank = Math.min(rankOf[vulns[pkg].severity] || 0, effective(pkg, {}));
+        keys.forEach(function (key) { if (rankOf[key] === rank) counts[key]++; });
+      });
+      console.log(keys.map(function (key) { return counts[key]; }).join(" "));
+
+      var seen = {};
+      var rows = [];
+      var allowedRows = [];
+      Object.keys(vulns).forEach(function (pkg) {
+        (vulns[pkg].via || []).forEach(function (via) {
+          if (!via || typeof via !== "object" || !(via.severity in rankOf)) return;
+          var row = { name: via.name || pkg, severity: via.severity, url: via.url || "", id: advisoryId(via) };
+          var key = row.name + " " + row.url;
+          if (seen[key]) return;
+          seen[key] = true;
+          if (row.id && row.id in allow.allowed) allowedRows.push(row);
+          else if (rankOf[row.severity] >= rankOf.high) rows.push(row);
+        });
+      });
+      function bySeverity(a, b) {
+        return rankOf[b.severity] - rankOf[a.severity] || a.name.localeCompare(b.name);
+      }
+      rows.sort(bySeverity).forEach(function (row) {
+        console.log("ROW " + row.name + " (" + row.severity + ") " + row.url);
+      });
+      allowedRows.sort(bySeverity).forEach(function (row) {
+        var until = allow.allowed[row.id];
+        console.log("ALLOWED " + row.name + " (" + row.severity + ") " + row.url + (until ? " until " + until : ""));
+      });
+      allow.expired.forEach(function (entry) { console.log("EXPIRED " + entry); });
+      Object.keys(allow.specific).forEach(function (id) {
+        if (!seenAllowed[id]) console.log("UNUSED " + id);
+      });
     });
   ') || {
-    reason=${counts:-$npm_err}
-    echo "  UNKNOWN audit returned invalid or incomplete data${reason:+: $reason}"
+    reason=${report:-"audit returned invalid or incomplete data${npm_err:+: $npm_err}"}
+    echo "  UNKNOWN $reason"
     echo "3" >> /tmp/.node_security_state.$$
     echo ""
     continue
   }
 
-  # The parser emits exactly four space-separated integers.
-  # shellcheck disable=SC2086
-  set -- $counts
+  # The first line is exactly four space-separated integers.
+  # shellcheck disable=SC2046
+  set -- $(printf '%s\n' "$report" | head -n 1)
   critical=$1
   high=$2
   moderate=$3
   low=$4
+  allowed_count=$(printf '%s\n' "$report" | grep -c '^ALLOWED ')
+  allowed_note=""
+  [ "$allowed_count" -gt 0 ] && allowed_note=", $allowed_count allowed"
 
   # only high and critical advisories alert; moderate and low are reported as OK
   if [ "$critical" -gt 0 ] || [ "$high" -gt 0 ]; then
-    echo "  CRITICAL audit: $critical critical, $high high, $moderate moderate, $low low"
+    echo "  CRITICAL audit: $critical critical, $high high, $moderate moderate, $low low$allowed_note"
     echo "2" >> /tmp/.node_security_state.$$
   elif [ $((moderate + low)) -gt 0 ]; then
-    echo "  OK       audit: $moderate moderate, $low low (below alert threshold)"
+    echo "  OK       audit: $moderate moderate, $low low (below alert threshold)$allowed_note"
+  elif [ "$allowed_count" -gt 0 ]; then
+    echo "  OK       audit: clean apart from $allowed_count allowed"
   else
     echo "  OK       audit: clean"
   fi
 
-  if [ "$critical" -gt 0 ] || [ "$high" -gt 0 ]; then
-    # list each critical/high advisory: package (severity) url
-    printf '%s' "$audit_json" | "$NODE_BIN" -e '
-      var input = "";
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", function (chunk) { input += chunk; });
-      process.stdin.on("end", function () {
-        var vulns = JSON.parse(input).vulnerabilities || {};
-        var rank = { critical: 0, high: 1 };
-        var seen = {};
-        var rows = [];
-        Object.keys(vulns).forEach(function (pkg) {
-          (vulns[pkg].via || []).forEach(function (via) {
-            if (!via || typeof via !== "object" || !(via.severity in rank)) return;
-            var row = { name: via.name || pkg, severity: via.severity, url: via.url || "" };
-            var key = row.name + " " + row.url;
-            if (seen[key]) return;
-            seen[key] = true;
-            rows.push(row);
-          });
-        });
-        rows.sort(function (a, b) {
-          return rank[a.severity] - rank[b.severity] || a.name.localeCompare(b.name);
-        });
-        rows.forEach(function (row) {
-          console.log("           -> " + row.name + " (" + row.severity + ") " + row.url);
-        });
-      });
-    ' 2>/dev/null
-  fi
+  # list each critical/high advisory, then what the allowlist is doing
+  printf '%s\n' "$report" | sed -n \
+    -e 's/^ROW /           -> /p' \
+    -e 's/^ALLOWED /  INFO     allowed: /p' \
+    -e 's/^EXPIRED /  INFO     allowlist entry no longer applies: /p' \
+    -e 's/^UNUSED /  INFO     allowlist entry not needed any more: /p'
 
   echo ""
 done > /tmp/.node_security_output.$$
